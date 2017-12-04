@@ -66,38 +66,17 @@ var verbose bool = true
 
 // You may want to create more global variables
 var generationNumber int = 1
-//
-// Functions
-
-// Up to you to decide which functions you want to add
+var allLinesExceptLastOneAndFirstOne string = ""
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Function     : walletUsage
-// Description  : This function prints out the wallet help
+// Function     : makePassword
+// Description  : Ask for a password twice and not echoed in the terminal
 //
 // Inputs       : none
-// Outputs      : none
+// Outputs      : The password padded on 32 bytes []byte{pwd,0x0,0x0...}
 
-func walletUsage() {
-	fmt.Fprintf(os.Stderr, "%s\n\n", usageText)
-}
-
-////////////////////////////////////////////////////////////////////////////////
-//
-// Function     : createWallet
-// Description  : This function creates a wallet if it does not exist
-//
-// Inputs       : filename - the name of the wallet file
-// Outputs      : the wallet if created, nil otherwise
-
-func createWallet(filename string) *wallet {
-
-	// Setup the wallet
-	var wal443 wallet
-	wal443.filename = filename
-	wal443.masterPassword = make([]byte, 32, 32) // You need to take it from here
-	// Requesting the password twice from the user
+func makePassword() []byte{
 	password_1 := []byte{}
 	password_2 := []byte{}
 
@@ -129,8 +108,53 @@ func createWallet(filename string) *wallet {
 			password_2 = []byte{}
 		}
 	}
+    return password_1
+}
 
-	copy(wal443.masterPassword, password_1) //wal443.masterPassword contains the pwd now
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : addPassword
+// Description  : Add a entry to the wallet
+//
+// Inputs       : The wallet
+// Outputs      : none, modify the file internaly
+
+func (wal443 wallet) addPassword(){
+    generationNumber += 1
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : walletUsage
+// Description  : This function prints out the wallet help
+//
+// Inputs       : none
+// Outputs      : none
+
+func walletUsage() {
+	fmt.Fprintf(os.Stderr, "%s\n\n", usageText)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : createWallet
+// Description  : This function creates a wallet if it does not exist
+//
+// Inputs       : filename - the name of the wallet file
+// Outputs      : the wallet if created, nil otherwise
+
+func createWallet(filename string) *wallet {
+
+	// Setup the wallet
+	var wal443 wallet
+	wal443.filename = filename
+	wal443.masterPassword = make([]byte, 32, 32) // You need to take it from here
+	
+    // Requesting the password twice from the user
+    password := makePassword()
+
+	copy(wal443.masterPassword, password) //wal443.masterPassword contains the pwd now
 	if verbose{
 		fmt.Print("\n-- Wallet created\n")
 	}
@@ -153,15 +177,15 @@ func loadWallet(filename string) *wallet {
     // Setup the wallet
 	var wal443 wallet
 	wal443.filename = filename
-
+    
     //load file
     file, err := os.Open(filename)
     if err != nil {
         fmt.Print("\nAn error occured while trying to open the file.\n")
         return nil
-    }
+    } 
     defer file.Close()
-
+    
     //ask password
     fmt.Print("\nEnter your password: ")
     bytePassword, err := terminal.ReadPassword(0)
@@ -169,39 +193,44 @@ func loadWallet(filename string) *wallet {
         fmt.Print("\nWrong password. Aborting.\n")
         return nil
     }
-
+    
     scanner := bufio.NewScanner(file)
     scanner.Scan()
     firstLine := scanner.Text()
     file.Seek(0, 2) // pointer to the end
     scanner.Scan()
     lastLine := scanner.Text()
-
+    
     file.Seek(0, 0) // pointer to the begining again
-    var allLinesExceptLastOne string = ""
     var allLines string = ""
+    var allLinesExceptLastOne string = ""
     for scanner.Scan(){
+        allLinesExceptLastOneAndFirstOne = allLinesExceptLastOne
         allLinesExceptLastOne = allLines
-        allLines += scanner.Text()
+        allLines += scanner.Text() +"\n"
     }
-
-    hashedPassword := sha1.Sum(bytePassword)
+    
+    //Compute HMAC of the file with the password typed
+    passwordPadded := make([]byte, 32, 32)
+    copy(passwordPadded, bytePassword)
+    hashedPassword := sha1.Sum(passwordPadded)
     toHMAC := bytes.Join([][]byte{hashedPassword[:16], []byte(allLinesExceptLastOne)},[]byte(""))
     HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
-    fmt.Print(base64.StdEncoding.EncodeToString([]byte(HMAC)))
-    //check HMAC
+    
+    //Decode HMAC stored in file
     HMACFromFile64 := strings.Split(lastLine,"\n")[0] // remove the \n at the end
     HMACFromFile, _ := base64.StdEncoding.DecodeString(HMACFromFile64)
-
-    fmt.Print(HMACFromFile, HMAC)
+    
+    //Check equality
     if hmac.Equal(HMACFromFile, HMAC){ //Does not leak timing info
         fmt.Print("\nPassword accepted.\n")
+        wal443.masterPassword = passwordPadded
     } else {
         fmt.Print("\nWrong password. Aborting.\n")
         return nil
     }
-
-    //set the generationNumber
+    
+    //Set the generationNumber
     firstLineSplitted := strings.Split(firstLine,"||")
     generationNumberTemp, err := strconv.Atoi(firstLineSplitted[1])
     if err == nil{
@@ -210,10 +239,10 @@ func loadWallet(filename string) *wallet {
         fmt.Print("\nFile corrupted. Aborting\n")
         os.Exit(-1)
     }
-
-
-    //create the wallet object
-	// Return the wall
+    
+    //Create the wallet object, loading all infos
+    //TODO
+	// Return the wallet
 	return &wal443
 }
 
@@ -233,14 +262,14 @@ func (wal443 wallet) saveWallet() bool {
 		// open input file
 		file, err := os.Create(wal443.filename)
 		if err != nil {
-			fmt.Print("\nAn error occured while trying to create the file.\n")
+			fmt.Print("\nAn error occured while trying to create the file.\n", err)
 			return false
 		}
 		defer file.Close()
 		//Add first line
 		var firstLine string = time.Now().Format("Mon Jan 2 15:04:05 2006")+"||1||\n"
 		if _, err := file.Write([]byte(firstLine)); err != nil {
-			fmt.Print("\nAn error occured while trying to write in the file.\n")
+			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
 			return false
 		}
 
@@ -251,11 +280,35 @@ func (wal443 wallet) saveWallet() bool {
 		HMAC64 := base64.StdEncoding.EncodeToString([]byte(HMAC))
 
 		if _, err := file.Write([]byte(HMAC64+"\n")); err != nil {
-			fmt.Print("\nAn error occured while trying to write in the file.\n")
+			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
 			return false
 		}
-    } else {
-        //save but change the first line and the HMAC
+    } else { //Save but change the first line and the HMAC
+        file, err := os.OpenFile(wal443.filename, os.O_RDWR|os.O_TRUNC, 0644) // Read && Write
+		if err != nil {
+			fmt.Print("\nAn error occured while trying to open the file.\n", err)
+			return false
+		}
+		defer file.Close()
+		//Compute new first line
+        var firstLine string = time.Now().Format("Mon Jan 2 15:04:05 2006")+"||"+strconv.Itoa(generationNumber)+"||\n"
+		if _, err := file.Write([]byte(firstLine)); err != nil { //Replace first line
+			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
+			return false
+		}
+        allLinesExceptLastOneNEW := firstLine + allLinesExceptLastOneAndFirstOne
+        
+		//Add HMAC
+		hashedPassword := sha1.Sum(wal443.masterPassword)
+		toHMAC := bytes.Join([][]byte{hashedPassword[:16], []byte(allLinesExceptLastOneNEW)},[]byte(""))
+		HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
+		HMAC64 := base64.StdEncoding.EncodeToString([]byte(HMAC))
+        
+        file.Seek(0,2) //Write at the end, replace the last line
+		if _, err := file.Write([]byte(HMAC64+"\n")); err != nil {
+			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
+			return false
+		}
     }
 	// Return successfully
 	return true
@@ -275,8 +328,7 @@ func (wal443 wallet) processWalletCommand(command string) bool {
 	// Process the command
 	switch command {
 	case "add":
-		// DO SOMETHING HERE, e.g., wal443.addPassword(...)
-
+		wal443.addPassword()
 	case "del":
 		// DO SOMETHING HERE
 
@@ -369,3 +421,4 @@ func main() {
 	// Return (no return code)
 	return
 }
+

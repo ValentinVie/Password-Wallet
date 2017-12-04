@@ -19,7 +19,11 @@ import (
 	"strings"
 	"math/rand"
 	"bytes"
-	//"bufio"
+    "strconv"
+	"crypto/sha1"//for sha1 hash
+	"crypto/hmac" //for hmac
+	"encoding/base64"//To encode in base64
+	"bufio"
 	"github.com/pborman/getopt"
 	"golang.org/x/crypto/ssh/terminal" // the only package I found to type without echo
 )
@@ -61,7 +65,7 @@ where:
 var verbose bool = true
 
 // You may want to create more global variables
-var generation_number int = 0
+var generationNumber int = 1
 //
 // Functions
 
@@ -127,9 +131,10 @@ func createWallet(filename string) *wallet {
 	}
 
 	copy(wal443.masterPassword, password_1) //wal443.masterPassword contains the pwd now
-
-
-	// Return the wall
+	if verbose{
+		fmt.Print("\n-- Wallet created\n")
+	}
+	// Return the wallet
 	return &wal443
 }
 
@@ -142,11 +147,72 @@ func createWallet(filename string) *wallet {
 // Outputs      : the wallet if created, nil otherwise
 
 func loadWallet(filename string) *wallet {
-
-	// Setup the wallet
+	if verbose{
+		fmt.Print("-- Opening the wallet in ./"+filename+" \n")
+	}
+    // Setup the wallet
 	var wal443 wallet
-	// DO THE LOADING HERE
+	wal443.filename = filename
 
+    //load file
+    file, err := os.Open(filename)
+    if err != nil {
+        fmt.Print("\nAn error occured while trying to open the file.\n")
+        return nil
+    }
+    defer file.Close()
+
+    //ask password
+    fmt.Print("\nEnter your password: ")
+    bytePassword, err := terminal.ReadPassword(0)
+    for len(bytePassword) >= 32 || err != nil{
+        fmt.Print("\nWrong password. Aborting.\n")
+        return nil
+    }
+
+    scanner := bufio.NewScanner(file)
+    scanner.Scan()
+    firstLine := scanner.Text()
+    file.Seek(0, 2) // pointer to the end
+    scanner.Scan()
+    lastLine := scanner.Text()
+
+    file.Seek(0, 0) // pointer to the begining again
+    var allLinesExceptLastOne string = ""
+    var allLines string = ""
+    for scanner.Scan(){
+        allLinesExceptLastOne = allLines
+        allLines += scanner.Text()
+    }
+
+    hashedPassword := sha1.Sum(bytePassword)
+    toHMAC := bytes.Join([][]byte{hashedPassword[:16], []byte(allLinesExceptLastOne)},[]byte(""))
+    HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
+    fmt.Print(base64.StdEncoding.EncodeToString([]byte(HMAC)))
+    //check HMAC
+    HMACFromFile64 := strings.Split(lastLine,"\n")[0] // remove the \n at the end
+    HMACFromFile, _ := base64.StdEncoding.DecodeString(HMACFromFile64)
+
+    fmt.Print(HMACFromFile, HMAC)
+    if hmac.Equal(HMACFromFile, HMAC){ //Does not leak timing info
+        fmt.Print("\nPassword accepted.\n")
+    } else {
+        fmt.Print("\nWrong password. Aborting.\n")
+        return nil
+    }
+
+    //set the generationNumber
+    firstLineSplitted := strings.Split(firstLine,"||")
+    generationNumberTemp, err := strconv.Atoi(firstLineSplitted[1])
+    if err == nil{
+        generationNumber = generationNumberTemp
+    } else {
+        fmt.Print("\nFile corrupted. Aborting\n")
+        os.Exit(-1)
+    }
+
+
+    //create the wallet object
 	// Return the wall
 	return &wal443
 }
@@ -160,9 +226,37 @@ func loadWallet(filename string) *wallet {
 // Outputs      : true if successful test, false if failure
 
 func (wal443 wallet) saveWallet() bool {
+	if verbose{
+		fmt.Print("-- Saving the wallet in ./"+wal443.filename+" \n")
+	}
+	if generationNumber == 1{ //Creation of the file
+		// open input file
+		file, err := os.Create(wal443.filename)
+		if err != nil {
+			fmt.Print("\nAn error occured while trying to create the file.\n")
+			return false
+		}
+		defer file.Close()
+		//Add first line
+		var firstLine string = time.Now().Format("Mon Jan 2 15:04:05 2006")+"||1||\n"
+		if _, err := file.Write([]byte(firstLine)); err != nil {
+			fmt.Print("\nAn error occured while trying to write in the file.\n")
+			return false
+		}
 
-	// Setup the wallet
+		//Add HMAC
+		hashedPassword := sha1.Sum(wal443.masterPassword)
+		toHMAC := bytes.Join([][]byte{hashedPassword[:16], []byte(firstLine)},[]byte(""))
+		HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
+		HMAC64 := base64.StdEncoding.EncodeToString([]byte(HMAC))
 
+		if _, err := file.Write([]byte(HMAC64+"\n")); err != nil {
+			fmt.Print("\nAn error occured while trying to write in the file.\n")
+			return false
+		}
+    } else {
+        //save but change the first line and the HMAC
+    }
 	// Return successfully
 	return true
 }

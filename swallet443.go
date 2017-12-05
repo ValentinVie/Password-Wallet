@@ -31,6 +31,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal" // the only package I found to type without echo
 )
 
+
 // Type definition  ** YOU WILL NEED TO ADD TO THESE **
 
 // A single password
@@ -70,6 +71,7 @@ var verbose bool = true
 
 // You may want to create more global variables
 var generationNumber int = 1
+var entryModified int 
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -184,7 +186,7 @@ func AES128GCMEncrypt(key []byte, plaintext []byte, salt []byte) []byte{
 // Description  : Add a entry to the wallet
 //
 // Inputs       : The wallet
-// Outputs      : none, modify the file internaly
+// Outputs      : none, modify the wallet
 
 func (wal443 *wallet) addPassword(){
     generationNumber += 1
@@ -227,6 +229,47 @@ func (wal443 *wallet) addPassword(){
     wal443.passwords = append(wal443.passwords, entryAdded)
 }
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : showList
+// Description  : Show the wallet entries list
+//
+// Inputs       : The wallet
+// Outputs      : none 
+
+func (wal443 wallet) showList(){
+    var entries []string
+    fmt.Printf("\n-------- Show List "+string(wal443.filename)+" --------\n")
+    for i, entry := range wal443.passwords{
+        entries = append(entries, "["+strconv.Itoa(i)+"] Name: "+string(entry.entryName) +" - Comment: " +string(entry.comment))
+        fmt.Printf("\n["+strconv.Itoa(i)+"] Name: "+string(entry.entryName) +" - Comment: " +string(entry.comment))
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : deletePassword
+// Description  : Delete an entry from the entries list
+//
+// Inputs       : The wallet
+// Outputs      : none 
+
+func (wal443 *wallet) deletePassword(){
+    fmt.Printf("\n-------- Delete entry --------\n")
+    fmt.Printf("Are you sure you want top delete the following entry ? (YES or NO)\n")
+    fmt.Printf("\n["+strconv.Itoa(entryModified)+"] Name: "+string(wal443.passwords[entryModified].entryName) +" - Comment: " +string(wal443.passwords[entryModified].comment))
+    
+    reader := bufio.NewReader(os.Stdin) //Read the input in the terminal
+    confirmation, err := reader.ReadString('\n') //entryName is a string
+    for confirmation != "YES" || confirmation != "NO" || err != nil{
+        fmt.Printf("Please type \"YES\" or \"NO\".\n")
+        confirmation, err = reader.ReadString('\n') //entryName is a string
+    }
+    
+    if strings.TrimRight(confirmation, "\n") == "YES"{
+        wal443.passwords = append(wal443.passwords[:entryModified], wal443.passwords[entryModified+1:]...)
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -437,8 +480,7 @@ func (wal443 *wallet) processWalletCommand(command string) bool {
 	case "add":
 		wal443.addPassword()
 	case "del":
-		// DO SOMETHING HERE
-
+        wal443.deletePassword()
 	case "show":
 		// DO SOMETHING HERE
 
@@ -449,7 +491,7 @@ func (wal443 *wallet) processWalletCommand(command string) bool {
 		// DO SOMETHING HERE
 
 	case "list":
-		// DO SOMETHING HERE
+        wal443.showList()
 
 	default:
 		// Handle error, return failure
@@ -476,7 +518,8 @@ func main() {
 	//rand.Seed(time.Now().UTC().UnixNano()) No need to seed with crypto/rand
 	helpflag := getopt.Bool('h', "", "help (this menu)")
 	verboseflag := getopt.Bool('v', "", "enable verbose output")
-
+    entryToDel := getopt.String("del", "", "Number of the entry to delete")
+    
 	// Now parse the command line arguments
 	err := getopt.Getopt(nil)
 	if err != nil {
@@ -505,7 +548,24 @@ func main() {
 	filename := getopt.Arg(0)
 	fmt.Printf("command [%t]\n", getopt.Arg(1))
 	command := strings.ToLower(getopt.Arg(1))
-
+    
+    if *entryToDel != "" && command == "del" {
+        temp, err := strconv.Atoi(*entryToDel)
+        if err != nil {
+            fmt.Fprintln(os.Stderr, err)
+            getopt.Usage()
+            os.Exit(-1)
+        }  else {
+            entryModified = int(temp)
+        }
+    } else {
+		fmt.Printf("Not enough arguments for wallet operation.\n")
+		getopt.Usage()
+		os.Exit(-1)
+    }
+    
+    // Init UI interface
+    //TODO
 	// Now check if we are creating a wallet
 	if command == "create" {
 

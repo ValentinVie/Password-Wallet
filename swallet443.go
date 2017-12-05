@@ -17,9 +17,12 @@ import (
 	"os"
 	"time"
 	"strings"
-	"math/rand"
+	//"math/rand"
+	"crypto/rand" // crypto rand is more secure.
 	"bytes"
     "strconv"
+    "crypto/cipher" // for password encryption
+    "crypto/aes" // for password encryption too
 	"crypto/sha1"//for sha1 hash
 	"crypto/hmac" //for hmac
 	"encoding/base64"//To encode in base64
@@ -32,6 +35,7 @@ import (
 
 // A single password
 type walletEntry struct {
+    entryName []byte   // Should be exactly 32 bytes with zero right padding
 	password []byte    // Should be exactly 32 bytes with zero right padding
 	salt []byte        // Should be exactly 16 bytes
 	comment []byte     // Should be exactly 128 bytes with zero right padding
@@ -66,7 +70,6 @@ var verbose bool = true
 
 // You may want to create more global variables
 var generationNumber int = 1
-var allLinesExceptLastOneAndFirstOne string = ""
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -76,26 +79,26 @@ var allLinesExceptLastOneAndFirstOne string = ""
 // Inputs       : none
 // Outputs      : The password padded on 32 bytes []byte{pwd,0x0,0x0...}
 
-func makePassword() []byte{
+func makePassword(requestInput string, maxLength int) []byte{
 	password_1 := []byte{}
 	password_2 := []byte{}
 
 	for !bytes.Equal(password_1, password_2) || len(password_1) == 0{
 		if  len(password_1) == 0 {
-			fmt.Print("\nCreate password for wallet: ")
+			fmt.Print(requestInput)
 		} else {
 			fmt.Print("\nType the password again please: ")
 		}
 		bytePassword, err := terminal.ReadPassword(0)
-	  if err == nil && len(bytePassword) <= 32 && len(password_1) == 0{
-			password_1 = make([]byte, 32, 32)
+	  if err == nil && len(bytePassword) <= maxLength && len(password_1) == 0{
+			password_1 = make([]byte, maxLength, maxLength)
 			copy(password_1, bytePassword)
-	  } else if err == nil && len(bytePassword) <= 32 && len(password_1) != 0{
+	  } else if err == nil && len(bytePassword) <= maxLength && len(password_1) != 0{
 			//pwd_1 already filled
-			password_2 = make([]byte, 32, 32)
+			password_2 = make([]byte, maxLength, maxLength)
 			copy(password_2, bytePassword)
-		} else if len(bytePassword) > 32 {
-			fmt.Print("\nPassword too long, it must be less than 32 characters.")
+		} else if len(bytePassword) > maxLength {
+            fmt.Print("\nPassword too long, it must be less than "+ strconv.Itoa(maxLength) +" characters.")
 		} else {
 			fmt.Print("\nSomething went wrong, please try again.")
 			password_1 = []byte{}
@@ -113,14 +116,115 @@ func makePassword() []byte{
 
 ////////////////////////////////////////////////////////////////////////////////
 //
+// Function     : AES128GCMEncrypt
+// Description  : Encrypt password with AES 128 or AES 256 depending on the size of the key
+//                Inspired from https://golang.org/src/crypto/cipher/example_test.go
+//
+// Inputs       : The key, the plaintext and the salt generated
+// Outputs      : The ciphertext
+
+func AES128GCMEncrypt(key []byte, plaintext []byte, salt []byte) []byte{
+  	// The key argument should be the AES key, either 16 or 32 bytes
+  	// to select AES-128 or AES-256.  
+    // Never use more than 2^32 random salt with a given key because of the risk of a repeat.
+  	block, err := aes.NewCipher(key)
+  	if err != nil {
+  		panic(err.Error())
+  	}
+  	aesgcm, err := cipher.NewGCMWithNonceSize(block, 16)
+    /*In CBC mode, you encrypt a block of data by taking the current plaintext block and exclusive-oring that wth the previous ciphertext block (or IV), and then sending the result of that through the block cipher; the output of the block cipher is the ciphertext block.
+
+    GCM mode provides both privacy (encryption) and integrity. To provide encryption, GCM maintains a counter; for each block of data, it sends the current value of the counter through the block cipher. Then, it takes the output of the block cipher, and exclusive or's that with the plaintext to form the ciphertext.*/
+  	if err != nil {
+  		panic(err.Error())
+  	}
+    
+  	ciphertext := aesgcm.Seal(nil, salt, plaintext, nil)
+    if verbose {
+        fmt.Printf("\n-- Encrypted password AES-128: %x\n", ciphertext)
+    }
+    return ciphertext
+  }
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : AES128GCMDecrypt
+// Description  : Decrypt password with AES 128 or AES 256 depending on the size of the key
+//                Inspired from https://golang.org/src/crypto/cipher/example_test.go
+//
+// Inputs       : The key, the ciphertext and the salt generated before
+// Outputs      : The plaintext
+
+  func AES128GCMDecrypt(key []byte, ciphertext []byte, salt []byte) []byte{
+  	// The key argument should be the AES key, either 16 or 32 bytes
+  	// to select AES-128 or AES-256.
+    
+  	block, err := aes.NewCipher(key)
+  	if err != nil {
+  		panic(err.Error())
+  	}
+  	aesgcm, err := cipher.NewGCMWithNonceSize(block, 16)
+  	if err != nil {
+  		panic(err.Error())
+  	}
+  	plaintext, err := aesgcm.Open(nil, salt, ciphertext, nil)
+  	if err != nil {
+  		panic(err.Error())
+  	}
+  
+    if verbose {
+        fmt.Printf("\n-- Decrypted password AES-128: %x\n", plaintext)
+    }
+    return plaintext
+  }
+
+////////////////////////////////////////////////////////////////////////////////
+//
 // Function     : addPassword
 // Description  : Add a entry to the wallet
 //
 // Inputs       : The wallet
 // Outputs      : none, modify the file internaly
 
-func (wal443 wallet) addPassword(){
+func (wal443 *wallet) addPassword(){
     generationNumber += 1
+    reader := bufio.NewReader(os.Stdin) //Read the input in the terminal
+    fmt.Print("\nName the new entry: ")
+    
+    //Get the entry name
+    entryNameString, err := reader.ReadString('\n') //entryName is a string
+    for err != nil || len(entryNameString) > 32 {
+        fmt.Print("\nAn error occurred, try again (lenght<32 caracters): ")
+        entryNameString, err = reader.ReadString('\n') //entryName is a string
+    }
+    entryName := make([]byte, 32, 32)
+    copy(entryName, entryNameString)
+    
+
+    //Genarate the random salt
+	salt := make([]byte, 16, 16)
+	_, err = rand.Read(salt)
+    
+    //Get the password for the entry
+    password := makePassword("\nCreate password for this entry: ", 16)    
+    
+    //Get the comment section
+    fmt.Print("\nAdd a comment for this entry: ")
+    commentString, err := reader.ReadString('\n') //comment is a string
+    for err != nil || len(commentString) > 128 {
+        fmt.Print("\nAn error occurred, try again (lenght<32 caracters): ")
+        commentString, err = reader.ReadString('\n') //comment is a string
+    }
+    comment := make([]byte, 32, 32)
+    copy(comment, commentString)
+    
+    var entryAdded walletEntry
+    entryAdded.entryName = entryName
+    entryAdded.password = password
+	entryAdded.salt = salt
+    entryAdded.comment = comment
+    
+    wal443.passwords = append(wal443.passwords, entryAdded)
 }
 
 
@@ -152,7 +256,7 @@ func createWallet(filename string) *wallet {
 	wal443.masterPassword = make([]byte, 32, 32) // You need to take it from here
 	
     // Requesting the password twice from the user
-    password := makePassword()
+    password := makePassword("\nCreate password for wallet: ", 32)
 
 	copy(wal443.masterPassword, password) //wal443.masterPassword contains the pwd now
 	if verbose{
@@ -172,7 +276,7 @@ func createWallet(filename string) *wallet {
 
 func loadWallet(filename string) *wallet {
 	if verbose{
-		fmt.Print("-- Opening the wallet in ./"+filename+" \n")
+		fmt.Print("\n-- Opening the wallet in ./"+filename+" \n")
 	}
     // Setup the wallet
 	var wal443 wallet
@@ -190,25 +294,26 @@ func loadWallet(filename string) *wallet {
     fmt.Print("\nEnter your password: ")
     bytePassword, err := terminal.ReadPassword(0)
     for len(bytePassword) >= 32 || err != nil{
-        fmt.Print("\nWrong password. Aborting.\n")
+        fmt.Print("\nThe password typed is invalid\n")
         return nil
     }
     
     scanner := bufio.NewScanner(file)
     scanner.Scan()
-    firstLine := scanner.Text()
-    file.Seek(0, 2) // pointer to the end
-    scanner.Scan()
-    lastLine := scanner.Text()
-    
-    file.Seek(0, 0) // pointer to the begining again
-    var allLines string = ""
+    firstLine := scanner.Text() + "\n"
+    lastLine := scanner.Text() + "\n"
+    allLines := scanner.Text() + "\n"
     var allLinesExceptLastOne string = ""
+    var allLinesExceptLastOneFirstOne []string
+    
     for scanner.Scan(){
-        allLinesExceptLastOneAndFirstOne = allLinesExceptLastOne
         allLinesExceptLastOne = allLines
         allLines += scanner.Text() +"\n"
+        lastLine = scanner.Text()
+        allLinesExceptLastOneFirstOne = append(allLinesExceptLastOneFirstOne, scanner.Text())
     }
+    
+    allLinesExceptLastOneFirstOne = allLinesExceptLastOneFirstOne[:len(allLinesExceptLastOneFirstOne)-1]
     
     //Compute HMAC of the file with the password typed
     passwordPadded := make([]byte, 32, 32)
@@ -241,7 +346,19 @@ func loadWallet(filename string) *wallet {
     }
     
     //Create the wallet object, loading all infos
-    //TODO
+    for _, lineEntry := range allLinesExceptLastOneFirstOne{
+        lineSplitted := strings.Split(lineEntry, "||")
+        var entry walletEntry
+        entry.entryName = []byte(lineSplitted[0])
+        entry.salt, _ = base64.StdEncoding.DecodeString(lineSplitted[1])
+        
+        cipher, _ := base64.StdEncoding.DecodeString(lineSplitted[2])
+        entry.password = AES128GCMDecrypt(hashedPassword[:16], cipher, entry.salt)
+        entry.comment = []byte(lineSplitted[3])
+        
+        wal443.passwords = append(wal443.passwords, entry)
+    }
+    
 	// Return the wallet
 	return &wal443
 }
@@ -256,59 +373,49 @@ func loadWallet(filename string) *wallet {
 
 func (wal443 wallet) saveWallet() bool {
 	if verbose{
-		fmt.Print("-- Saving the wallet in ./"+wal443.filename+" \n")
+		fmt.Print("\n-- Saving the wallet in ./"+wal443.filename+" \n")
 	}
-	if generationNumber == 1{ //Creation of the file
-		// open input file
-		file, err := os.Create(wal443.filename)
-		if err != nil {
-			fmt.Print("\nAn error occured while trying to create the file.\n", err)
-			return false
-		}
-		defer file.Close()
-		//Add first line
-		var firstLine string = time.Now().Format("Mon Jan 2 15:04:05 2006")+"||1||\n"
-		if _, err := file.Write([]byte(firstLine)); err != nil {
-			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
-			return false
-		}
 
-		//Add HMAC
-		hashedPassword := sha1.Sum(wal443.masterPassword)
-		toHMAC := bytes.Join([][]byte{hashedPassword[:16], []byte(firstLine)},[]byte(""))
-		HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
-		HMAC64 := base64.StdEncoding.EncodeToString([]byte(HMAC))
+    file, err := os.Create(wal443.filename)
+    if err != nil {
+        fmt.Print("\nAn error occured while trying to save the file.\n", err)
+        return false
+    }
+    defer file.Close()
+    //Compute new first line
+    var firstLine string = time.Now().Format("Mon Jan 2 15:04:05 2006")+"||"+strconv.Itoa(generationNumber)+"||\n"
+    if _, err := file.WriteString(firstLine); err != nil { //Replace first line
+        fmt.Print("\nAn error occured while trying to write in the file.\n", err)
+        return false
+    }
 
-		if _, err := file.Write([]byte(HMAC64+"\n")); err != nil {
-			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
-			return false
-		}
-    } else { //Save but change the first line and the HMAC
-        file, err := os.OpenFile(wal443.filename, os.O_RDWR|os.O_TRUNC, 0644) // Read && Write
-		if err != nil {
-			fmt.Print("\nAn error occured while trying to open the file.\n", err)
-			return false
-		}
-		defer file.Close()
-		//Compute new first line
-        var firstLine string = time.Now().Format("Mon Jan 2 15:04:05 2006")+"||"+strconv.Itoa(generationNumber)+"||\n"
-		if _, err := file.Write([]byte(firstLine)); err != nil { //Replace first line
-			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
-			return false
-		}
-        allLinesExceptLastOneNEW := firstLine + allLinesExceptLastOneAndFirstOne
+    hashedPassword := sha1.Sum(wal443.masterPassword)
+    AESKey := hashedPassword[:16] // 16 bytes = 128-bit
+    allLinesExceptLastOne := firstLine
         
-		//Add HMAC
-		hashedPassword := sha1.Sum(wal443.masterPassword)
-		toHMAC := bytes.Join([][]byte{hashedPassword[:16], []byte(allLinesExceptLastOneNEW)},[]byte(""))
-		HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
-		HMAC64 := base64.StdEncoding.EncodeToString([]byte(HMAC))
+    for _, walletEntry := range wal443.passwords{
+        //Generate the hash with the seed and wk...
+        salt64 := base64.StdEncoding.EncodeToString(walletEntry.salt)
+        cyphertext := AES128GCMEncrypt(AESKey, walletEntry.password, walletEntry.salt)
+        cyphertext64 := base64.StdEncoding.EncodeToString(cyphertext) 
+
+        line := strings.Split(string(walletEntry.entryName),"\n")[0] + "||" + salt64 + "||" + cyphertext64 + "||" + strings.Split(string(walletEntry.comment),"\n")[0] + "\n"
+        allLinesExceptLastOne += line
+        if _, err := file.WriteString(line); err != nil { //Replace line
+            fmt.Print("\nAn error occured while trying to write in the file.\n", err)
+            return false
+        }
+    }
+
+    //Add HMAC
+    toHMAC := bytes.Join([][]byte{hashedPassword[:16], []byte(allLinesExceptLastOne)},[]byte(""))
+    HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
+    HMAC64 := base64.StdEncoding.EncodeToString([]byte(HMAC))
+
+    if _, err := file.WriteString(HMAC64+"\n"); err != nil {
+        fmt.Print("\nAn error occured while trying to write in the file.\n", err)
+        return false
         
-        file.Seek(0,2) //Write at the end, replace the last line
-		if _, err := file.Write([]byte(HMAC64+"\n")); err != nil {
-			fmt.Print("\nAn error occured while trying to write in the file.\n", err)
-			return false
-		}
     }
 	// Return successfully
 	return true
@@ -323,7 +430,7 @@ func (wal443 wallet) saveWallet() bool {
 //                command - the command to execute
 // Outputs      : true if successful test, false if failure
 
-func (wal443 wallet) processWalletCommand(command string) bool {
+func (wal443 *wallet) processWalletCommand(command string) bool {
 
 	// Process the command
 	switch command {
@@ -366,7 +473,7 @@ func main() {
 
 	// Setup options for the program content
 	getopt.SetUsage(walletUsage)
-	rand.Seed(time.Now().UTC().UnixNano())
+	//rand.Seed(time.Now().UTC().UnixNano()) No need to seed with crypto/rand
 	helpflag := getopt.Bool('h', "", "help (this menu)")
 	verboseflag := getopt.Bool('v', "", "enable verbose output")
 

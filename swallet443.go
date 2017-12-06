@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"os"
+    "os/exec" //clear the screen once the password is displayed
 	"time"
 	"strings"
 	//"math/rand"
@@ -71,7 +72,6 @@ var verbose bool = true
 
 // You may want to create more global variables
 var generationNumber int = 1
-var entryModified int 
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -238,12 +238,14 @@ func (wal443 *wallet) addPassword(){
 // Outputs      : none 
 
 func (wal443 wallet) showList(){
-    var entries []string
     fmt.Printf("\n-------- Show List "+string(wal443.filename)+" --------\n")
     for i, entry := range wal443.passwords{
-        entries = append(entries, "["+strconv.Itoa(i)+"] Name: "+string(entry.entryName) +" - Comment: " +string(entry.comment))
-        fmt.Printf("\n["+strconv.Itoa(i)+"] Name: "+string(entry.entryName) +" - Comment: " +string(entry.comment))
+        fmt.Printf("\n["+strconv.Itoa(i)+"] Name: "+string(entry.entryName) +" - Comment: " +string(entry.comment) + "\n")
     }
+    if len(wal443.passwords) == 0 {
+    fmt.Printf("List empty...")
+    }
+    fmt.Printf("\n-------- End of the list --------\n")
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -255,20 +257,88 @@ func (wal443 wallet) showList(){
 // Outputs      : none 
 
 func (wal443 *wallet) deletePassword(){
-    fmt.Printf("\n-------- Delete entry --------\n")
-    fmt.Printf("Are you sure you want top delete the following entry ? (YES or NO)\n")
-    fmt.Printf("\n["+strconv.Itoa(entryModified)+"] Name: "+string(wal443.passwords[entryModified].entryName) +" - Comment: " +string(wal443.passwords[entryModified].comment))
+    wal443.showList()
+    
+    if len(wal443.passwords) == 0{
+        fmt.Print("\nAborting, list empty.\n")
+        os.Exit(-1)
+    }
+    
+    //Get the id of the entry to delete.
+    fmt.Print("\nType the number of the entry you want to delete: ")
     
     reader := bufio.NewReader(os.Stdin) //Read the input in the terminal
+    entryDeletedString, errRead := reader.ReadString('\n')
+    entryDeletedString = strings.TrimRight(entryDeletedString, "\n")
+    entryDeleted, errConv := strconv.Atoi(entryDeletedString)
+    for errRead != nil || errConv != nil || len(wal443.passwords)-1 < entryDeleted || entryDeleted < 0{
+        fmt.Print("\nPlease type a valid number: ")
+        entryDeletedString, errRead = reader.ReadString('\n')
+        entryDeletedString = strings.TrimRight(entryDeletedString, "\n")
+        entryDeleted, errConv = strconv.Atoi(entryDeletedString)
+    }
+    
+    fmt.Printf("\nAre you sure you want to delete the following entry ?")
+    fmt.Printf("\n["+entryDeletedString+"] Name: "+string(wal443.passwords[entryDeleted].entryName) +" - Comment: " +string(wal443.passwords[entryDeleted].comment))
+    fmt.Printf("\nType YES: ")
+    
     confirmation, err := reader.ReadString('\n') //entryName is a string
-    for confirmation != "YES" || confirmation != "NO" || err != nil{
-        fmt.Printf("Please type \"YES\" or \"NO\".\n")
+    confirmation = strings.TrimRight(confirmation, "\n")
+    for strings.Compare(confirmation,"YES") != 0 || err != nil{
+        fmt.Printf("Please type \"YES\" :")
         confirmation, err = reader.ReadString('\n') //entryName is a string
+        confirmation = strings.TrimRight(confirmation, "\n")
     }
     
     if strings.TrimRight(confirmation, "\n") == "YES"{
-        wal443.passwords = append(wal443.passwords[:entryModified], wal443.passwords[entryModified+1:]...)
+        wal443.passwords = append(wal443.passwords[:entryDeleted], wal443.passwords[entryDeleted+1:]...)
+        fmt.Printf("\n-------- Entry removed --------\n")
+    } else {
+        fmt.Printf("\n-------- Abort --------\n")
     }
+    
+    wal443.showList()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : showPassword
+// Description  : show an entry from the entries list with password in clear
+//
+// Inputs       : The wallet
+// Outputs      : none 
+
+func (wal443 *wallet) showPassword(){
+    wal443.showList()
+    
+    if len(wal443.passwords) == 0{
+        fmt.Print("\nAborting, list empty.\n")
+        os.Exit(-1)
+    }
+    
+    //Get the id of the entry to show.
+    fmt.Print("\nType the number of the entry you want to see: ")
+    
+    reader := bufio.NewReader(os.Stdin) //Read the input in the terminal
+    entryShownString, errRead := reader.ReadString('\n')
+    entryShownString = strings.TrimRight(entryShownString, "\n")
+    entryShown, errConv := strconv.Atoi(entryShownString)
+    for errRead != nil || errConv != nil || len(wal443.passwords)-1 < entryShown || entryShown < 0{
+        fmt.Print("\nPlease type a valid number: ")
+        entryShownString, errRead = reader.ReadString('\n')
+        entryShownString = strings.TrimRight(entryShownString, "\n")
+        entryShown, errConv = strconv.Atoi(entryShownString)
+    }
+    
+    
+    fmt.Print("\nYou will have 10 seconds to see it: ")
+    time.Sleep(3* time.Second)
+    fmt.Printf("\n["+entryShownString+"] Name: "+string(wal443.passwords[entryShown].entryName) +" - Comment: " +string(wal443.passwords[entryShown].comment))
+    fmt.Printf("\n["+entryShownString+"] Password: "+string(wal443.passwords[entryShown].password)+"\r")
+    
+    time.Sleep(10* time.Second)
+    fmt.Printf("["+entryShownString+"] Password: **********\n")
+    
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -302,9 +372,7 @@ func createWallet(filename string) *wallet {
     password := makePassword("\nCreate password for wallet: ", 32)
 
 	copy(wal443.masterPassword, password) //wal443.masterPassword contains the pwd now
-	if verbose{
-		fmt.Print("\n-- Wallet created\n")
-	}
+    fmt.Print("\n-------- Wallet created --------\n")
 	// Return the wallet
 	return &wal443
 }
@@ -334,7 +402,7 @@ func loadWallet(filename string) *wallet {
     defer file.Close()
     
     //ask password
-    fmt.Print("\nEnter your password: ")
+    fmt.Print("Enter your password: ")
     bytePassword, err := terminal.ReadPassword(0)
     for len(bytePassword) >= 32 || err != nil{
         fmt.Print("\nThe password typed is invalid\n")
@@ -366,7 +434,7 @@ func loadWallet(filename string) *wallet {
     HMAC := hmac.New(sha1.New, toHMAC).Sum(nil)
     
     //Decode HMAC stored in file
-    HMACFromFile64 := strings.Split(lastLine,"\n")[0] // remove the \n at the end
+    HMACFromFile64 := strings.TrimRight(lastLine, "\n") // remove the \n at the end
     HMACFromFile, _ := base64.StdEncoding.DecodeString(HMACFromFile64)
     
     //Check equality
@@ -482,7 +550,7 @@ func (wal443 *wallet) processWalletCommand(command string) bool {
 	case "del":
         wal443.deletePassword()
 	case "show":
-		// DO SOMETHING HERE
+        wal443.showPassword()
 
 	case "chpw":
 		// DO SOMETHING HERE
@@ -518,7 +586,6 @@ func main() {
 	//rand.Seed(time.Now().UTC().UnixNano()) No need to seed with crypto/rand
 	helpflag := getopt.Bool('h', "", "help (this menu)")
 	verboseflag := getopt.Bool('v', "", "enable verbose output")
-    entryToDel := getopt.String("del", "", "Number of the entry to delete")
     
 	// Now parse the command line arguments
 	err := getopt.Getopt(nil)
@@ -549,26 +616,13 @@ func main() {
 	fmt.Printf("command [%t]\n", getopt.Arg(1))
 	command := strings.ToLower(getopt.Arg(1))
     
-    if *entryToDel != "" && command == "del" {
-        temp, err := strconv.Atoi(*entryToDel)
-        if err != nil {
-            fmt.Fprintln(os.Stderr, err)
-            getopt.Usage()
-            os.Exit(-1)
-        }  else {
-            entryModified = int(temp)
-        }
-    } else {
-		fmt.Printf("Not enough arguments for wallet operation.\n")
-		getopt.Usage()
-		os.Exit(-1)
-    }
+    //clear the screen
+    c := exec.Command("clear")
+    c.Stdout = os.Stdout
+    c.Run()
     
-    // Init UI interface
-    //TODO
 	// Now check if we are creating a wallet
 	if command == "create" {
-
 		// Create and save the wallet as needed
 		wal443 := createWallet(filename)
 		if wal443 != nil {

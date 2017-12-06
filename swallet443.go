@@ -15,7 +15,9 @@ package main
 import (
 	"fmt"
 	"os"
-    "os/exec" //clear the screen once the password is displayed
+    "os/exec" //clear the screen
+    "text/tabwriter" //Write in columns
+    "github.com/olekukonko/tablewriter" // Write n columns
 	"time"
 	"strings"
 	//"math/rand"
@@ -72,6 +74,11 @@ var verbose bool = true
 
 // You may want to create more global variables
 var generationNumber int = 1
+//Display settings
+var displayCommentWrap int = 35 //# of caracters before wrapping
+var displayNameWrap int = 15
+var header string = "#\tName:\tComment:"
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -196,7 +203,7 @@ func (wal443 *wallet) addPassword(){
     //Get the entry name
     entryNameString, err := reader.ReadString('\n') //entryName is a string
     for err != nil || len(entryNameString) > 32 {
-        fmt.Print("\nAn error occurred, try again (lenght<32 caracters): ")
+        fmt.Print("\nAn error occurred, try again (lenght < 32 caracters): ")
         entryNameString, err = reader.ReadString('\n') //entryName is a string
     }
     entryName := make([]byte, 32, 32)
@@ -214,10 +221,10 @@ func (wal443 *wallet) addPassword(){
     fmt.Print("\nAdd a comment for this entry: ")
     commentString, err := reader.ReadString('\n') //comment is a string
     for err != nil || len(commentString) > 128 {
-        fmt.Print("\nAn error occurred, try again (lenght<32 caracters): ")
+        fmt.Print("\nAn error occurred, try again (lenght <= 128 caracters): ")
         commentString, err = reader.ReadString('\n') //comment is a string
     }
-    comment := make([]byte, 32, 32)
+    comment := make([]byte, 128, 128)
     copy(comment, commentString)
     
     var entryAdded walletEntry
@@ -227,6 +234,7 @@ func (wal443 *wallet) addPassword(){
     entryAdded.comment = comment
     
     wal443.passwords = append(wal443.passwords, entryAdded)
+    fmt.Printf("\n-------- Entry added --------\n")
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -238,14 +246,81 @@ func (wal443 *wallet) addPassword(){
 // Outputs      : none 
 
 func (wal443 wallet) showList(){
+    
     fmt.Printf("\n-------- Show List "+string(wal443.filename)+" --------\n")
-    for i, entry := range wal443.passwords{
-        fmt.Printf("\n["+strconv.Itoa(i)+"] Name: "+string(entry.entryName) +" - Comment: " +string(entry.comment) + "\n")
-    }
     if len(wal443.passwords) == 0 {
-    fmt.Printf("List empty...")
+        fmt.Printf("List empty...")
+    } else{
+        w := new(tabwriter.Writer)
+        w.Init(os.Stdout, 5, 0, 1, ' ',0)
+        fmt.Fprintln(w, header)
+        for i, entry := range wal443.passwords{
+            entryName, _ := tablewriter.WrapString(string(entry.entryName),displayNameWrap)
+            comment,_ := tablewriter.WrapString(string(entry.comment),displayCommentWrap)
+            k := 0
+            if(len(entryName) <= len(comment)){
+                for k < len(entryName){
+                    fmt.Fprintln(w, "["+strconv.Itoa(i)+"]\t"+entryName[k]+"\t"+comment[k]+"\t")
+                    k++
+                }
+                for k < len(comment){
+                    fmt.Fprintln(w, "["+strconv.Itoa(i)+"]\t"+strings.Repeat(" ", displayNameWrap)+"\t"+comment[k]+"\t")
+                    k++
+                }
+            } else{
+                for k < len(comment){
+                    fmt.Fprintln(w, "["+strconv.Itoa(i)+"]\t"+entryName[k]+"\t"+comment[k]+"\t")
+                    k++
+                }
+                for k < len(entryName){
+                    fmt.Fprintln(w, "["+strconv.Itoa(i)+"]\t"+entryName[k]+"\t"+strings.Repeat(" ", displayCommentWrap)+"\t")
+                    k++
+                }
+            }
+            fmt.Fprintln(w,"\t\t\t")
+        }
+        fmt.Fprintln(w)
+        w.Flush()
     }
     fmt.Printf("\n-------- End of the list --------\n")
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : showSingleEntry
+// Description  : Show the entry with the number specified
+//
+// Inputs       : The wallet and the entry number
+// Outputs      : none 
+
+func (wal443 wallet) showSingleEntry(n int){
+    w := new(tabwriter.Writer)
+    w.Init(os.Stdout, 5, 0, 1, ' ',0)
+    fmt.Fprintln(w, header)    
+    entryName, _ := tablewriter.WrapString(string(wal443.passwords[n].entryName),displayNameWrap)
+    comment,_ := tablewriter.WrapString(string(wal443.passwords[n].comment),displayCommentWrap)
+    k := 0
+    if(len(entryName) <= len(comment)){
+        for k < len(entryName){
+            fmt.Fprintln(w, "["+strconv.Itoa(n)+"]\t"+entryName[k]+"\t"+comment[k]+"\t")
+            k++
+        }
+        for k < len(comment){
+            fmt.Fprintln(w, "["+strconv.Itoa(n)+"]\t"+strings.Repeat(" ", displayNameWrap)+"\t"+comment[k]+"\t")
+            k++
+        }
+    } else{
+        for k < len(comment){
+            fmt.Fprintln(w, "["+strconv.Itoa(n)+"]\t"+entryName[k]+"\t"+comment[k]+"\t")
+            k++
+        }
+        for k < len(entryName){
+            fmt.Fprintln(w, "["+strconv.Itoa(n)+"]\t"+entryName[k]+"\t"+strings.Repeat(" ", displayCommentWrap)+"\t")
+            k++
+        }
+    }
+    fmt.Fprintln(w)
+    w.Flush()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -258,6 +333,7 @@ func (wal443 wallet) showList(){
 
 func (wal443 *wallet) deletePassword(){
     wal443.showList()
+    generationNumber += 1
     
     if len(wal443.passwords) == 0{
         fmt.Print("\nAborting, list empty.\n")
@@ -278,16 +354,22 @@ func (wal443 *wallet) deletePassword(){
         entryDeleted, errConv = strconv.Atoi(entryDeletedString)
     }
     
-    fmt.Printf("\nAre you sure you want to delete the following entry ?")
-    fmt.Printf("\n["+entryDeletedString+"] Name: "+string(wal443.passwords[entryDeleted].entryName) +" - Comment: " +string(wal443.passwords[entryDeleted].comment))
+    fmt.Printf("\nAre you sure you want to delete the following entry ?\n")
+    wal443.showSingleEntry(entryDeleted)
     fmt.Printf("\nType YES: ")
     
     confirmation, err := reader.ReadString('\n') //entryName is a string
     confirmation = strings.TrimRight(confirmation, "\n")
+    attempt := 0
     for strings.Compare(confirmation,"YES") != 0 || err != nil{
         fmt.Printf("Please type \"YES\" :")
         confirmation, err = reader.ReadString('\n') //entryName is a string
         confirmation = strings.TrimRight(confirmation, "\n")
+        
+        if attempt >= 2{
+            break
+        }
+        attempt++
     }
     
     if strings.TrimRight(confirmation, "\n") == "YES"{
@@ -331,13 +413,105 @@ func (wal443 *wallet) showPassword(){
     }
     
     
-    fmt.Print("\nYou will have 10 seconds to see it: ")
-    time.Sleep(3* time.Second)
-    fmt.Printf("\n["+entryShownString+"] Name: "+string(wal443.passwords[entryShown].entryName) +" - Comment: " +string(wal443.passwords[entryShown].comment))
-    fmt.Printf("\n["+entryShownString+"] Password: "+string(wal443.passwords[entryShown].password)+"\r")
+    fmt.Print("\nYou will have 7 seconds to see it: \n")
+    time.Sleep(2* time.Second)
+    wal443.showSingleEntry(entryShown)
+    fmt.Printf("["+entryShownString+"] Password: "+string(wal443.passwords[entryShown].password)+"\r")
     
-    time.Sleep(10* time.Second)
+    time.Sleep(7* time.Second)
     fmt.Printf("["+entryShownString+"] Password: **********\n")
+    
+}
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : changePassword
+// Description  : change an entry.password
+//
+// Inputs       : The wallet
+// Outputs      : none 
+
+func (wal443 *wallet) changePassword(){
+    wal443.showList()
+    generationNumber += 1
+    
+    if len(wal443.passwords) == 0{
+        fmt.Print("\nAborting, list empty.\n")
+        os.Exit(-1)
+    }
+    
+    //Get the id of the entry to show.
+    fmt.Print("\nType the number of the entry you want to change: ")
+    
+    reader := bufio.NewReader(os.Stdin) //Read the input in the terminal
+    entryChangedString, errRead := reader.ReadString('\n')
+    entryChangedString = strings.TrimRight(entryChangedString, "\n")
+    entryChanged, errConv := strconv.Atoi(entryChangedString)
+    for errRead != nil || errConv != nil || len(wal443.passwords)-1 < entryChanged || entryChanged < 0{
+        fmt.Print("\nPlease type a valid number: ")
+        entryChangedString, errRead = reader.ReadString('\n')
+        entryChangedString = strings.TrimRight(entryChangedString, "\n")
+        entryChanged, errConv = strconv.Atoi(entryChangedString)
+    }
+    
+    newEntryPassword := makePassword("Type the new password for this entry :", 16)
+    
+    fmt.Printf("\nAre you sure you want to change the following entry ?\n")
+    wal443.showSingleEntry(entryChanged)
+    fmt.Printf("Type YES: ")
+    
+    confirmation, err := reader.ReadString('\n') //entryName is a string
+    confirmation = strings.TrimRight(confirmation, "\n")
+    attempt := 0
+    for strings.Compare(confirmation,"YES") != 0 || err != nil{
+        fmt.Printf("Please type \"YES\" :")
+        confirmation, err = reader.ReadString('\n') //entryName is a string
+        confirmation = strings.TrimRight(confirmation, "\n")
+    
+        if attempt >= 2{
+            break
+        }
+        attempt++
+    }
+    
+    if strings.TrimRight(confirmation, "\n") == "YES"{
+        copy(wal443.passwords[entryChanged].password, newEntryPassword) //Password changed
+        fmt.Printf("\n-------- Entry changed --------\n")
+    } else {
+        fmt.Printf("\n-------- Abort --------\n")
+    }
+    
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Function     : resetMasterPassword
+// Description  : change the masterPassword for the wallet
+//
+// Inputs       : The wallet
+// Outputs      : none 
+
+func (wal443 *wallet) resetMasterPassword(){    
+    generationNumber += 1
+    newMasterPassword := makePassword("Type the new wallet password :", 32)
+    
+    fmt.Printf("\nAre you sure you want to change the master password ?")
+    fmt.Printf("\nType YES: ")
+    
+    reader := bufio.NewReader(os.Stdin) //Read the input in the terminal
+    confirmation, err := reader.ReadString('\n') //entryName is a string
+    confirmation = strings.TrimRight(confirmation, "\n")
+    for strings.Compare(confirmation,"YES") != 0 || err != nil{
+        fmt.Printf("Please type \"YES\" :")
+        confirmation, err = reader.ReadString('\n') //entryName is a string
+        confirmation = strings.TrimRight(confirmation, "\n")
+    }
+    
+    if strings.TrimRight(confirmation, "\n") == "YES"{
+        copy(wal443.masterPassword, newMasterPassword) //Main password changed
+        fmt.Printf("\n-------- Wallet password changed --------\n")
+    } else {
+        fmt.Printf("\n-------- Abort --------\n")
+    }
     
 }
 
@@ -547,16 +721,18 @@ func (wal443 *wallet) processWalletCommand(command string) bool {
 	switch command {
 	case "add":
 		wal443.addPassword()
+        
 	case "del":
         wal443.deletePassword()
+        
 	case "show":
         wal443.showPassword()
 
 	case "chpw":
-		// DO SOMETHING HERE
+        wal443.changePassword()
 
 	case "reset":
-		// DO SOMETHING HERE
+        wal443.resetMasterPassword()
 
 	case "list":
         wal443.showList()
@@ -630,7 +806,6 @@ func main() {
 		}
 
 	} else {
-
 		// Load the wallet, then process the command
 		wal443 := loadWallet(filename)
 		if wal443 != nil && wal443.processWalletCommand(command) {
